@@ -30,6 +30,68 @@ const BatchAnalyzer = () => {
     setComments(newComments);
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/download-template`, {
+        responseType: 'blob'
+      });
+      
+      // 创建下载链接
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', '评论数据导入模板.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('模板下载失败，请稍后重试');
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // 检查文件类型
+    if (!file.name.toLowerCase().endsWith('.xlsx') && !file.name.toLowerCase().endsWith('.xls')) {
+      setError('请上传 .xlsx 或 .xls 格式的Excel文件');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await axios.post(`${API_BASE_URL}/upload-excel`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      if (response.data.success && response.data.comments) {
+        // 将导入的评论添加到现有列表
+        const newComments = response.data.comments;
+        setComments([...comments.filter(c => c.text.trim()), ...newComments]);
+        setError(null);
+        // 显示成功消息
+        alert(`成功导入 ${response.data.total} 条评论！`);
+      } else {
+        setError(response.data.error || '导入失败');
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || '文件上传失败，请稍后重试');
+    } finally {
+      setLoading(false);
+      // 清空文件输入
+      event.target.value = '';
+    }
+  };
+
   const handleAnalyze = async () => {
     const validComments = comments.filter(c => c.text.trim());
     if (validComments.length === 0) {
@@ -149,6 +211,30 @@ const BatchAnalyzer = () => {
     <div className="batch-analyzer">
       <div className="input-section">
         <h2>批量评论输入</h2>
+        
+        {/* Excel导入功能 */}
+        <div className="excel-import-section">
+          <div className="excel-actions">
+            <button 
+              className="template-button"
+              onClick={handleDownloadTemplate}
+              type="button"
+            >
+              📥 下载Excel模板
+            </button>
+            <label className="upload-button">
+              📤 导入Excel文件
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+            </label>
+          </div>
+          <p className="excel-tip">支持 .xlsx 和 .xls 格式，Excel文件需包含"评论"列</p>
+        </div>
+
         <div className="comments-list">
           {comments.map((comment, index) => (
             <div key={index} className="comment-row">

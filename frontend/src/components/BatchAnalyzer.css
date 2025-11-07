@@ -82,6 +82,56 @@
   box-shadow: 0 6px 20px rgba(255, 107, 107, 0.6);
 }
 
+.excel-import-section {
+  margin-bottom: 25px;
+  padding: 20px;
+  background: linear-gradient(135deg, rgba(79, 172, 254, 0.05) 0%, rgba(0, 242, 254, 0.05) 100%);
+  border-radius: 16px;
+  border: 2px dashed rgba(79, 172, 254, 0.3);
+}
+
+.excel-actions {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+
+.template-button,
+.upload-button {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  color: white;
+  border: none;
+  border-radius: 50px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+  display: inline-block;
+}
+
+.template-button:hover,
+.upload-button:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 20px rgba(79, 172, 254, 0.6);
+}
+
+.upload-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.upload-button:hover {
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+.excel-tip {
+  color: #666;
+  font-size: 0.85rem;
+  margin: 0;
+  text-align: center;
+}
 .actions {
   display: flex;
   gap: 15px;

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import jieba
 import jieba.analyse
@@ -6,6 +6,9 @@ from collections import Counter
 import re
 import json
 import os
+import pandas as pd
+import io
+from werkzeug.utils import secure_filename
 
 # 导入情感标签定义
 try:
@@ -562,11 +565,95 @@ def analyze_batch():
     else:
         use_ai_partial = False
     
+    # 判断是否使用批量AI分析
+    use_batch_ai = (
+        use_ai is True and 
+        AI_AVAILABLE and 
+        ai_analyzer.ai_enabled and 
+        ai_analyzer.batch_enabled and 
+        len(comments) > 1 and
+        not use_ai_partial  # 部分使用AI时不启用批量模式
+    )
+    
     results = []
     all_keywords = []
     ai_count = 0
     ml_count = 0
     
+    # 如果启用批量AI分析，先批量处理需要AI的评论
+    ai_results_map = {}  # 存储批量分析结果
+    if use_batch_ai:
+        # 收集需要AI分析的评论（包括脱敏处理）
+        ai_comments = []
+        ai_indices = []
+        ai_analysis_texts = []  # 脱敏后的文本
+        ml_indices = []
+        
+        for i, comment in enumerate(comments):
+            original_text = comment.get('text', '')
+            if not original_text:
+                continue
+            
+            # 检查隐私保护
+            should_use_local = False
+            sensitive_detected = False
+            if PRIVACY_AVAILABLE:
+                sensitive_info = privacy_utils.detect_sensitive_info(original_text)
+                sensitive_detected = any(sensitive_info.values())
+                should_use_local = privacy_utils.should_use_local_analysis(original_text, industry)
+            
+            if should_use_local:
+                ml_indices.append(i)
+            else:
+                # 需要AI分析，进行脱敏处理
+                analysis_text = original_text
+                if sensitive_detected:
+                    analysis_text, _ = privacy_utils.desensitize_text(original_text, keep_context=True)
+                
+                ai_comments.append({
+                    'index': i,
+                    'original': original_text,
+                    'analysis': analysis_text,
+                    'sensitive_detected': sensitive_detected
+                })
+                ai_indices.append(i)
+                ai_analysis_texts.append(analysis_text)
+        
+        # 批量AI分析
+        if ai_analysis_texts:
+            print(f"[批量分析] 使用批量AI分析 {len(ai_analysis_texts)} 条评论")
+            batch_results = ai_analyzer.analyze_sentiment_batch_with_ai(
+                ai_analysis_texts, 
+                batch_size=ai_analyzer.batch_size
+            )
+            
+            # 将批量结果映射回原始位置，并保存评论信息
+            for comment_info, result in zip(ai_comments, batch_results):
+                if result:
+                    # 保存评论的原始信息和脱敏信息
+                    result['_comment_info'] = comment_info
+                    ai_results_map[comment_info['index']] = result
+        
+        # 处理ML分析的评论
+        if ml_indices:
+            print(f"[批量分析] 使用ML分析 {len(ml_indices)} 条评论")
+            for idx in ml_indices:
+                comment = comments[idx]
+                original_text = comment.get('text', '')
+                ml_result = analyze_sentiment_ml(original_text)
+                # 添加人机协同信息
+                confidence = ml_result.get('confidence', 0.5)
+                review_status = check_human_review_needed(confidence)
+                ml_result['human_review_needed'] = review_status['needs_review']
+                ml_result['review_status'] = review_status['status']
+                ml_result['review_reason'] = review_status['reason']
+                ml_result['confidence_thresholds'] = {
+                    "min": HUMAN_REVIEW_MIN_THRESHOLD,
+                    "max": HUMAN_REVIEW_MAX_THRESHOLD
+                }
+                ai_results_map[idx] = ml_result
+    
+    # 统一处理所有评论（兼容原有逻辑和批量结果）
     for i, comment in enumerate(comments):
         original_text = comment.get('text', '')
         if not original_text:
@@ -620,7 +707,36 @@ def analyze_batch():
                 batch_privacy_info["desensitization_applied_count"] += 1
         
         # 情感分析
-        sentiment_result = analyze_sentiment(analysis_text, use_ai=current_use_ai)
+        # 如果使用了批量AI分析，直接使用批量结果
+        if use_batch_ai and i in ai_results_map:
+            sentiment_result = ai_results_map[i].copy()  # 复制结果，避免修改原始数据
+            
+            # 获取评论信息（用于脱敏处理）
+            comment_info = sentiment_result.pop('_comment_info', None)
+            if comment_info:
+                # 如果脱敏了，使用脱敏后的文本
+                analysis_text = comment_info['analysis']
+                comment_privacy_info["sensitive_detected"] = comment_info.get('sensitive_detected', False)
+                if comment_info.get('sensitive_detected', False):
+                    comment_privacy_info["desensitization_applied"] = True
+                    batch_privacy_info["desensitization_applied_count"] += 1
+                    if not comment_privacy_info.get("sensitive_detected"):
+                        batch_privacy_info["sensitive_detected_count"] += 1
+            
+            # 添加人机协同信息（如果还没有）
+            if 'human_review_needed' not in sentiment_result:
+                confidence = sentiment_result.get('confidence', 0.5)
+                review_status = check_human_review_needed(confidence)
+                sentiment_result['human_review_needed'] = review_status['needs_review']
+                sentiment_result['review_status'] = review_status['status']
+                sentiment_result['review_reason'] = review_status['reason']
+                sentiment_result['confidence_thresholds'] = {
+                    "min": HUMAN_REVIEW_MIN_THRESHOLD,
+                    "max": HUMAN_REVIEW_MAX_THRESHOLD
+                }
+        else:
+            # 使用原有的单条分析逻辑
+            sentiment_result = analyze_sentiment(analysis_text, use_ai=current_use_ai)
         
         # 统计分析方法
         if 'ai' in sentiment_result.get('method', ''):
@@ -905,6 +1021,154 @@ def get_human_review_stats():
             "max": HUMAN_REVIEW_MAX_THRESHOLD
         }
     })
+
+@app.route('/api/upload-excel', methods=['POST'])
+def upload_excel():
+    """
+    上传Excel文件并解析评论数据
+    
+    支持格式：
+    - .xlsx (Excel 2007+)
+    - .xls (Excel 97-2003)
+    
+    Excel文件应包含以下列（至少需要"评论"列）：
+    - 评论（必需）：评论文本内容
+    - 其他列会被忽略
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "未找到上传的文件"}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({"error": "未选择文件"}), 400
+    
+    # 检查文件扩展名（使用原始文件名，不经过secure_filename处理）
+    original_filename = file.filename or ''
+    filename_lower = original_filename.lower().strip()
+    
+    # 调试信息
+    print(f"[Excel导入] 原始文件名: {original_filename}")
+    print(f"[Excel导入] 小写文件名: {filename_lower}")
+    print(f"[Excel导入] 文件MIME类型: {file.content_type}")
+    
+    # 检查文件扩展名
+    has_valid_extension = filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls')
+    
+    # 也检查MIME类型（作为备用验证）
+    valid_mime_types = [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+        'application/vnd.ms-excel',  # .xls
+        'application/excel',
+        'application/x-excel',
+        'application/x-msexcel'
+    ]
+    has_valid_mime = file.content_type in valid_mime_types if file.content_type else False
+    
+    if not has_valid_extension and not has_valid_mime:
+        detected_ext = filename_lower.split('.')[-1] if '.' in filename_lower else '无'
+        return jsonify({
+            "error": f"不支持的文件格式，请上传 .xlsx 或 .xls 文件。\n当前文件: {original_filename}\n检测到的扩展名: {detected_ext}\nMIME类型: {file.content_type or '未知'}"
+        }), 400
+    
+    # 使用secure_filename处理文件名（仅用于安全，不影响扩展名检查）
+    filename = secure_filename(original_filename) if original_filename else 'upload.xlsx'
+    
+    try:
+        # 读取Excel文件（根据原始文件名或MIME类型判断引擎）
+        if filename_lower.endswith('.xlsx'):
+            use_openpyxl = True
+        elif filename_lower.endswith('.xls'):
+            use_openpyxl = False
+        elif file.content_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+            use_openpyxl = True
+        else:
+            # 默认尝试使用openpyxl（适用于.xlsx）
+            use_openpyxl = True
+        
+        print(f"[Excel导入] 使用引擎: {'openpyxl' if use_openpyxl else 'xlrd'}")
+        df = pd.read_excel(file, engine='openpyxl' if use_openpyxl else None)
+        
+        if df.empty:
+            return jsonify({"error": "Excel文件为空"}), 400
+        
+        # 查找评论列（支持多种可能的列名）
+        comment_column = None
+        possible_names = ['评论', 'comment', 'comments', '内容', '文本', 'text', 'content', '评论文本']
+        
+        for col in df.columns:
+            if str(col).strip() in possible_names:
+                comment_column = col
+                break
+        
+        # 如果没找到，尝试使用第一列
+        if comment_column is None:
+            comment_column = df.columns[0]
+            print(f"[Excel导入] 未找到标准评论列，使用第一列: {comment_column}")
+        
+        # 提取评论数据
+        comments = []
+        for idx, row in df.iterrows():
+            comment_text = str(row[comment_column]).strip()
+            if comment_text and comment_text.lower() != 'nan' and comment_text != '':
+                comments.append({
+                    "text": comment_text
+                })
+        
+        if not comments:
+            return jsonify({"error": "Excel文件中未找到有效的评论数据"}), 400
+        
+        return jsonify({
+            "success": True,
+            "message": f"成功导入 {len(comments)} 条评论",
+            "comments": comments,
+            "total": len(comments)
+        })
+        
+    except Exception as e:
+        print(f"[Excel导入] 错误: {str(e)}")
+        return jsonify({"error": f"解析Excel文件失败: {str(e)}"}), 500
+
+@app.route('/api/download-template', methods=['GET'])
+def download_template():
+    """
+    下载Excel模板文件
+    模板包含示例评论数据，用户可以参考格式导入自己的数据
+    """
+    try:
+        # 创建示例数据
+        sample_data = {
+            '评论': [
+                '这个商品质量很好，非常满意！',
+                '物流很快，包装精美，五星好评！',
+                '质量不错，价格实惠',
+                '商品质量差，不推荐',
+                '一般般，还可以',
+                '非常喜欢，下次还会购买',
+                '不满意，退货了',
+                '性价比很高，推荐购买'
+            ]
+        }
+        
+        df = pd.DataFrame(sample_data)
+        
+        # 创建Excel文件在内存中
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='评论数据')
+        
+        output.seek(0)
+        
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='评论数据导入模板.xlsx'
+        )
+        
+    except Exception as e:
+        print(f"[模板下载] 错误: {str(e)}")
+        return jsonify({"error": f"生成模板文件失败: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)

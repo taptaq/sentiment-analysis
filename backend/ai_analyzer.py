@@ -42,6 +42,14 @@ class AIAnalyzer:
         self.use_few_shot = os.getenv('AI_USE_FEW_SHOT', 'true').lower() == 'true'
         self.few_shot_count = int(os.getenv('AI_FEW_SHOT_COUNT', '3'))  # 默认使用3个示例
         self.training_data_file = os.getenv('TRAINING_DATA_FILE', 'training_data.json')
+        
+        # 批量分析配置
+        self.batch_enabled = os.getenv('AI_BATCH_ENABLED', 'true').lower() == 'true'
+        self.batch_size = int(os.getenv('AI_BATCH_SIZE', '10'))
+        
+        if self.ai_enabled:
+            if self.batch_enabled:
+                print(f"[AI分析器] 批量分析已启用，批量大小: {self.batch_size}")
     
     def _load_few_shot_examples(self, current_text: str = "", count: int = 3) -> List[Tuple[str, str]]:
         """
@@ -318,6 +326,371 @@ confidence（置信度）的计算方式：
                 return result
         
         return None
+    
+    def analyze_sentiment_batch_with_ai(self, texts: List[str], batch_size: int = 10) -> List[Optional[Dict]]:
+        """
+        批量使用AI分析情感（优化：一次API调用处理多条评论）
+        
+        Args:
+            texts: 评论文本列表
+            batch_size: 每批处理的评论数量（默认10条）
+            
+        Returns:
+            情感分析结果列表，与输入列表一一对应，失败时对应位置为None
+        """
+        if not self.ai_enabled or not texts:
+            return [None] * len(texts)
+        
+        results = []
+        total = len(texts)
+        
+        # 分批处理
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch_texts = texts[batch_start:batch_end]
+            
+            print(f"[批量AI分析] 处理批次 {batch_start//batch_size + 1}，评论 {batch_start+1}-{batch_end}/{total}")
+            
+            # 尝试批量调用
+            batch_results = None
+            
+            # 优先使用DeepSeek
+            if self.deepseek_api_key:
+                batch_results = self._analyze_batch_with_deepseek(batch_texts)
+                if batch_results:
+                    results.extend(batch_results)
+                    continue
+            
+            # 尝试使用OpenAI
+            if self.openai_api_key:
+                batch_results = self._analyze_batch_with_openai(batch_texts)
+                if batch_results:
+                    results.extend(batch_results)
+                    continue
+            
+            # 如果批量调用失败，回退到单条调用
+            if batch_results is None:
+                print(f"[批量AI分析] 批量调用失败，回退到单条调用")
+                for text in batch_texts:
+                    result = self.analyze_sentiment_with_ai(text)
+                    results.append(result)
+        
+        return results
+    
+    def _get_batch_analysis_prompt(self, texts: List[str], few_shot_examples: List[Tuple[str, str]] = None) -> str:
+        """
+        获取批量分析的prompt
+        
+        Args:
+            texts: 评论文本列表
+            few_shot_examples: Few-shot示例列表
+        """
+        # 构建few-shot examples部分（与单条分析相同）
+        few_shot_section = ""
+        if few_shot_examples and len(few_shot_examples) > 0:
+            few_shot_section = "\n\n【重要参考：人工复核数据示例】\n"
+            few_shot_section += "以下是一些已经人工复核并标注好的评论示例，这些是经过人工验证的准确标注数据。\n"
+            few_shot_section += "**特别重要**：当你对评论的情感判断感到模糊、不确定或存在歧义时，必须优先参考这些示例的分析标准和标注结果。\n\n"
+            
+            for i, (example_text, example_label) in enumerate(few_shot_examples, 1):
+                label_cn_map = {
+                    "strongly_negative": "强烈负面",
+                    "weakly_negative": "轻微负面",
+                    "neutral": "中性",
+                    "weakly_positive": "轻微正面",
+                    "strongly_positive": "强烈正面",
+                    "positive": "正面",
+                    "negative": "负面",
+                }
+                label_cn = label_cn_map.get(example_label, example_label)
+                few_shot_section += f"示例{i}：\n"
+                few_shot_section += f"评论：{example_text}\n"
+                few_shot_section += f"人工复核标注：{label_cn} ({example_label})\n\n"
+            
+            few_shot_section += "【如何使用这些示例】\n"
+            few_shot_section += "1. 如果当前评论与某个示例在表达方式、用词、语境上相似，应参考该示例的标注结果\n"
+            few_shot_section += "2. 如果当前评论的情感倾向不明显或存在歧义，优先参考相似示例的标注标准\n"
+            few_shot_section += "3. 如果当前评论的表达方式与示例中的隐晦表达类似，应按照示例的标注逻辑进行判断\n"
+            few_shot_section += "4. 当你的判断与示例标准不一致时，应重新审视并调整，确保与人工复核的标准保持一致\n"
+            few_shot_section += "5. 这些示例代表了人工复核的准确标准，当判断模糊时，必须依赖这些示例而非自己的推测\n\n"
+        
+        # 构建批量评论部分
+        comments_section = "\n".join([f"评论{i+1}：{text}" for i, text in enumerate(texts)])
+        
+        return f"""请仔细分析以下多条商品评论的情感倾向，并提取关键词。深刻理解成人用品行业用户"羞于直言"的评论特点，精准识别隐晦表达的真实情感。{few_shot_section}
+
+【批量评论内容】
+{comments_section}
+
+【核心分析原则】
+深刻理解成人用品行业用户"羞于直言"的评论特点，需要从隐晦、委婉、间接的表达中识别真实情感。
+
+【输出要求】
+请为每条评论分别分析，并以JSON数组格式返回结果，格式如下：
+[
+    {{
+        "comment_index": 1,
+        "sentiment": "strongly_negative" 或 "weakly_negative" 或 "neutral" 或 "weakly_positive" 或 "strongly_positive",
+        "confidence": 0.0-1.0之间的置信度分数,
+        "probabilities": {{
+            "strongly_negative": 0.0-1.0,
+            "weakly_negative": 0.0-1.0,
+            "neutral": 0.0-1.0,
+            "weakly_positive": 0.0-1.0,
+            "strongly_positive": 0.0-1.0
+        }},
+        "reason": "分析原因（简短说明）",
+        "keywords": ["关键词1", "关键词2", ...],
+        "negative_parts": ["负面部分1", "负面部分2", ...],
+        "suggestions": ["改进建议1", "改进建议2", ...],
+        "confidence_calculation": "置信度计算说明（可选）"
+    }},
+    {{
+        "comment_index": 2,
+        ...
+    }}
+]
+
+【重要说明】
+1. 返回的数组长度必须与输入的评论数量一致
+2. comment_index 从1开始，对应评论1、评论2...
+3. 每条评论的分析标准与单条分析完全相同（参考上述few-shot示例和核心分析原则）
+4. probabilities中的五个值加起来应该接近1.0
+5. 只返回JSON数组，不要其他文字"""
+    
+    def _analyze_batch_with_deepseek(self, texts: List[str]) -> Optional[List[Dict]]:
+        """使用DeepSeek API批量分析"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.deepseek_api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            # 加载few-shot examples（使用第一条评论作为参考）
+            few_shot_examples = []
+            if self.use_few_shot and texts:
+                few_shot_examples = self._load_few_shot_examples(current_text=texts[0], count=self.few_shot_count)
+            
+            prompt = self._get_batch_analysis_prompt(texts, few_shot_examples)
+            
+            payload = {
+                "model": self.deepseek_model,
+                "messages": [
+                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": min(500 * len(texts), 4000)  # 根据评论数量调整token限制
+            }
+            
+            response = requests.post(
+                f"{self.deepseek_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30  # 批量处理需要更长的超时时间
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content'].strip()
+                
+                # 尝试提取JSON数组
+                try:
+                    # 移除可能的markdown代码块标记
+                    if content.startswith('```'):
+                        content = content.split('```')[1]
+                        if content.startswith('json'):
+                            content = content[4:]
+                        content = content.strip()
+                    
+                    batch_results = json.loads(content)
+                    
+                    # 验证返回格式
+                    if not isinstance(batch_results, list):
+                        print(f"[批量DeepSeek] 返回格式错误：不是数组")
+                        return None
+                    
+                    if len(batch_results) != len(texts):
+                        print(f"[批量DeepSeek] 返回数量不匹配：期望{len(texts)}，实际{len(batch_results)}")
+                        return None
+                    
+                    # 转换为标准格式
+                    formatted_results = []
+                    for item in batch_results:
+                        comment_index = item.get('comment_index', 0)
+                        ai_probs = item.get("probabilities", {})
+                        
+                        # 支持五分类，兼容旧的三分类
+                        if SENTIMENT_LABELS_AVAILABLE and any(k in ai_probs for k in ['strongly_negative', 'weakly_negative', 'weakly_positive', 'strongly_positive']):
+                            probabilities = {
+                                "strongly_negative": float(ai_probs.get("strongly_negative", 0.2)),
+                                "weakly_negative": float(ai_probs.get("weakly_negative", 0.2)),
+                                "neutral": float(ai_probs.get("neutral", 0.2)),
+                                "weakly_positive": float(ai_probs.get("weakly_positive", 0.2)),
+                                "strongly_positive": float(ai_probs.get("strongly_positive", 0.2))
+                            }
+                        else:
+                            # 兼容旧的三分类，转换为五分类
+                            old_positive = float(ai_probs.get("positive", 0.33))
+                            old_negative = float(ai_probs.get("negative", 0.33))
+                            old_neutral = float(ai_probs.get("neutral", 0.34))
+                            probabilities = {
+                                "strongly_negative": old_negative * 0.5,
+                                "weakly_negative": old_negative * 0.5,
+                                "neutral": old_neutral,
+                                "weakly_positive": old_positive * 0.5,
+                                "strongly_positive": old_positive * 0.5
+                            }
+                        
+                        confidence = float(item.get("confidence", max(probabilities.values())))
+                        
+                        # 转换sentiment标签
+                        sentiment = item.get("sentiment", "neutral")
+                        if SENTIMENT_LABELS_AVAILABLE and sentiment in ['positive', 'negative', 'neutral']:
+                            if sentiment == 'positive':
+                                sentiment = 'strongly_positive' if probabilities.get('strongly_positive', 0) > probabilities.get('weakly_positive', 0) else 'weakly_positive'
+                            elif sentiment == 'negative':
+                                sentiment = 'strongly_negative' if probabilities.get('strongly_negative', 0) > probabilities.get('weakly_negative', 0) else 'weakly_negative'
+                        
+                        formatted_results.append({
+                            "sentiment": sentiment,
+                            "confidence": confidence,
+                            "probabilities": probabilities,
+                            "reason": item.get("reason", ""),
+                            "keywords": item.get("keywords", []),
+                            "negative_parts": item.get("negative_parts", []),
+                            "suggestions": item.get("suggestions", []),
+                            "confidence_calculation": item.get("confidence_calculation", f"基于概率分布最大值max({', '.join([f'{k}={v:.2f}' for k, v in probabilities.items()])}) = {max(probabilities.values()):.2f}"),
+                            "method": "ai_deepseek_batch"
+                        })
+                    
+                    print(f"[批量DeepSeek] 成功处理 {len(formatted_results)} 条评论")
+                    return formatted_results
+                    
+                except json.JSONDecodeError as e:
+                    print(f"[批量DeepSeek] JSON解析失败: {str(e)}")
+                    print(f"[批量DeepSeek] 返回内容: {content[:500]}")
+                    return None
+            else:
+                print(f"DeepSeek批量API错误: {response.status_code}, {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"DeepSeek批量分析失败: {str(e)}")
+            return None
+    
+    def _analyze_batch_with_openai(self, texts: List[str]) -> Optional[List[Dict]]:
+        """使用OpenAI API批量分析"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.openai_api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            # 加载few-shot examples
+            few_shot_examples = []
+            if self.use_few_shot and texts:
+                few_shot_examples = self._load_few_shot_examples(current_text=texts[0], count=self.few_shot_count)
+            
+            prompt = self._get_batch_analysis_prompt(texts, few_shot_examples)
+            
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": min(500 * len(texts), 4000)
+            }
+            
+            response = requests.post(
+                f"{self.openai_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content'].strip()
+                
+                try:
+                    if content.startswith('```'):
+                        content = content.split('```')[1]
+                        if content.startswith('json'):
+                            content = content[4:]
+                        content = content.strip()
+                    
+                    batch_results = json.loads(content)
+                    
+                    if not isinstance(batch_results, list):
+                        print(f"[批量OpenAI] 返回格式错误：不是数组")
+                        return None
+                    
+                    if len(batch_results) != len(texts):
+                        print(f"[批量OpenAI] 返回数量不匹配：期望{len(texts)}，实际{len(batch_results)}")
+                        return None
+                    
+                    # 转换为标准格式（与DeepSeek相同）
+                    formatted_results = []
+                    for item in batch_results:
+                        ai_probs = item.get("probabilities", {})
+                        
+                        if SENTIMENT_LABELS_AVAILABLE and any(k in ai_probs for k in ['strongly_negative', 'weakly_negative', 'weakly_positive', 'strongly_positive']):
+                            probabilities = {
+                                "strongly_negative": float(ai_probs.get("strongly_negative", 0.2)),
+                                "weakly_negative": float(ai_probs.get("weakly_negative", 0.2)),
+                                "neutral": float(ai_probs.get("neutral", 0.2)),
+                                "weakly_positive": float(ai_probs.get("weakly_positive", 0.2)),
+                                "strongly_positive": float(ai_probs.get("strongly_positive", 0.2))
+                            }
+                        else:
+                            old_positive = float(ai_probs.get("positive", 0.33))
+                            old_negative = float(ai_probs.get("negative", 0.33))
+                            old_neutral = float(ai_probs.get("neutral", 0.34))
+                            probabilities = {
+                                "strongly_negative": old_negative * 0.5,
+                                "weakly_negative": old_negative * 0.5,
+                                "neutral": old_neutral,
+                                "weakly_positive": old_positive * 0.5,
+                                "strongly_positive": old_positive * 0.5
+                            }
+                        
+                        confidence = float(item.get("confidence", max(probabilities.values())))
+                        
+                        sentiment = item.get("sentiment", "neutral")
+                        if SENTIMENT_LABELS_AVAILABLE and sentiment in ['positive', 'negative', 'neutral']:
+                            if sentiment == 'positive':
+                                sentiment = 'strongly_positive' if probabilities.get('strongly_positive', 0) > probabilities.get('weakly_positive', 0) else 'weakly_positive'
+                            elif sentiment == 'negative':
+                                sentiment = 'strongly_negative' if probabilities.get('strongly_negative', 0) > probabilities.get('weakly_negative', 0) else 'weakly_negative'
+                        
+                        formatted_results.append({
+                            "sentiment": sentiment,
+                            "confidence": confidence,
+                            "probabilities": probabilities,
+                            "reason": item.get("reason", ""),
+                            "keywords": item.get("keywords", []),
+                            "negative_parts": item.get("negative_parts", []),
+                            "suggestions": item.get("suggestions", []),
+                            "confidence_calculation": item.get("confidence_calculation", f"基于概率分布最大值max({', '.join([f'{k}={v:.2f}' for k, v in probabilities.items()])}) = {max(probabilities.values()):.2f}"),
+                            "method": "ai_openai_batch"
+                        })
+                    
+                    print(f"[批量OpenAI] 成功处理 {len(formatted_results)} 条评论")
+                    return formatted_results
+                    
+                except json.JSONDecodeError as e:
+                    print(f"[批量OpenAI] JSON解析失败: {str(e)}")
+                    return None
+            else:
+                print(f"OpenAI批量API错误: {response.status_code}, {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"OpenAI批量分析失败: {str(e)}")
+            return None
     
     def _analyze_with_deepseek(self, text: str, few_shot_examples: List[Tuple[str, str]] = None) -> Optional[Dict]:
         """使用DeepSeek API分析（OpenAI兼容接口，支持few-shot learning）"""
