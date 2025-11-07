@@ -1,0 +1,270 @@
+[
+  {
+    "text": "这个商品质量很好，非常满意！",
+    "label": "positive"
+  },
+  {
+    "text": "很好",
+    "label": "positive"
+  },
+  {
+    "text": "非常好",
+    "label": "positive"
+  },
+  {
+    "text": "很好用",
+    "label": "positive"
+  },
+  {
+    "text": "质量很好",
+    "label": "positive"
+  },
+  {
+    "text": "服务很好",
+    "label": "positive"
+  },
+  {
+    "text": "物流很快，包装精美，五星好评！",
+    "label": "positive"
+  },
+  {
+    "text": "性价比很高，推荐购买",
+    "label": "positive"
+  },
+  {
+    "text": "质量不错，价格实惠",
+    "label": "positive"
+  },
+  {
+    "text": "非常喜欢，下次还会购买",
+    "label": "positive"
+  },
+  {
+    "text": "很棒",
+    "label": "positive"
+  },
+  {
+    "text": "不错",
+    "label": "positive"
+  },
+  {
+    "text": "满意",
+    "label": "positive"
+  },
+  {
+    "text": "推荐",
+    "label": "positive"
+  },
+  {
+    "text": "好评",
+    "label": "positive"
+  },
+  {
+    "text": "值得购买",
+    "label": "positive"
+  },
+  {
+    "text": "物超所值",
+    "label": "positive"
+  },
+  {
+    "text": "非常满意",
+    "label": "positive"
+  },
+  {
+    "text": "质量上乘",
+    "label": "positive"
+  },
+  {
+    "text": "服务态度好",
+    "label": "positive"
+  },
+  {
+    "text": "包装精美",
+    "label": "positive"
+  },
+  {
+    "text": "发货速度快",
+    "label": "positive"
+  },
+  {
+    "text": "商品质量差，不推荐",
+    "label": "negative"
+  },
+  {
+    "text": "很差",
+    "label": "negative"
+  },
+  {
+    "text": "不好",
+    "label": "negative"
+  },
+  {
+    "text": "质量差",
+    "label": "negative"
+  },
+  {
+    "text": "服务差",
+    "label": "negative"
+  },
+  {
+    "text": "不满意",
+    "label": "negative"
+  },
+  {
+    "text": "非常不满意",
+    "label": "negative"
+  },
+  {
+    "text": "很不满意",
+    "label": "negative"
+  },
+  {
+    "text": "不太满意",
+    "label": "negative"
+  },
+  {
+    "text": "不满意，质量差",
+    "label": "negative"
+  },
+  {
+    "text": "不满意，退货了",
+    "label": "negative"
+  },
+  {
+    "text": "不满意，不推荐",
+    "label": "negative"
+  },
+  {
+    "text": "物流太慢，等了很久",
+    "label": "negative"
+  },
+  {
+    "text": "价格虚高，不值这个价",
+    "label": "negative"
+  },
+  {
+    "text": "质量有问题，退货了",
+    "label": "negative"
+  },
+  {
+    "text": "服务态度差，体验不好",
+    "label": "negative"
+  },
+  {
+    "text": "不推荐",
+    "label": "negative"
+  },
+  {
+    "text": "不推荐购买",
+    "label": "negative"
+  },
+  {
+    "text": "不建议购买",
+    "label": "negative"
+  },
+  {
+    "text": "不值得购买",
+    "label": "negative"
+  },
+  {
+    "text": "失望",
+    "label": "negative"
+  },
+  {
+    "text": "很失望",
+    "label": "negative"
+  },
+  {
+    "text": "非常失望",
+    "label": "negative"
+  },
+  {
+    "text": "垃圾",
+    "label": "negative"
+  },
+  {
+    "text": "太差",
+    "label": "negative"
+  },
+  {
+    "text": "很差劲",
+    "label": "negative"
+  },
+  {
+    "text": "质量不行",
+    "label": "negative"
+  },
+  {
+    "text": "退货",
+    "label": "negative"
+  },
+  {
+    "text": "差评",
+    "label": "negative"
+  },
+  {
+    "text": "给差评",
+    "label": "negative"
+  },
+  {
+    "text": "必须差评",
+    "label": "negative"
+  },
+  {
+    "text": "不怎么样",
+    "label": "negative"
+  },
+  {
+    "text": "不咋地",
+    "label": "negative"
+  },
+  {
+    "text": "不靠谱",
+    "label": "negative"
+  },
+  {
+    "text": "不实用",
+    "label": "negative"
+  },
+  {
+    "text": "一般般，还可以",
+    "label": "neutral"
+  },
+  {
+    "text": "普通商品，没什么特别",
+    "label": "neutral"
+  },
+  {
+    "text": "还行吧，凑合用",
+    "label": "neutral"
+  },
+  {
+    "text": "一般",
+    "label": "neutral"
+  },
+  {
+    "text": "还可以",
+    "label": "neutral"
+  },
+  {
+    "text": "普通",
+    "label": "neutral"
+  },
+  {
+    "text": "凑合",
+    "label": "neutral"
+  },
+  {
+    "text": "中规中矩",
+    "label": "neutral"
+  },
+  {
+    "text": "体验一点都不好，300多的价钱商家含泪赚10倍呀，做的还挺精致的，但用的不舒服，很难用，闲置了",
+    "label": "negative"
+  },
+  {
+    "text": "一般啦",
+    "label": "neutral"
+  }
+]
