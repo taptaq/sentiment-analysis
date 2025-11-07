@@ -66,7 +66,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-后端将在 `http://localhost:5000` 运行
+后端将在 `http://localhost:8080` 运行
 
 ### 前端设置
 
@@ -151,7 +151,7 @@ npm start
 
 ## 注意事项
 
-- 确保后端服务在端口 5000 运行
+- 确保后端服务在端口 8080 运行
 - 如果遇到 CORS 问题，检查 Flask-CORS 配置
 - 模型使用简单的训练数据，实际项目中建议使用更大的数据集进行训练
 
