@@ -50,6 +50,63 @@ const BatchAnalyzer = () => {
     }
   };
 
+  const handleExportReport = async () => {
+    if (!result) {
+      setError('请先进行分析，才能导出报告');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      // 准备导出数据（包含完整的分析结果）
+      const exportData = {
+        results: result.results || [],
+        statistics: result.statistics || {},
+        analysis_info: result.analysis_info || {},
+        privacy_info: result.privacy_info || {}
+      };
+
+      const response = await axios.post(
+        `${API_BASE_URL}/export-report`,
+        exportData,
+        {
+          responseType: 'blob',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // 创建下载链接
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // 从响应头获取文件名，如果没有则使用默认名称
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = '评论分析报告.xlsx';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = decodeURIComponent(filenameMatch[1].replace(/['"]/g, ''));
+        }
+      }
+      
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('导出报告失败:', err);
+      setError('导出报告失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -231,6 +288,17 @@ const BatchAnalyzer = () => {
                 style={{ display: 'none' }}
               />
             </label>
+            {result && (
+              <button 
+                className="export-button"
+                onClick={handleExportReport}
+                disabled={loading}
+                type="button"
+                title="导出分析报告（Excel格式）"
+              >
+                📊 导出分析报告
+              </button>
+            )}
           </div>
           <p className="excel-tip">支持 .xlsx 和 .xls 格式，Excel文件需包含"评论"列</p>
         </div>

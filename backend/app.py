@@ -818,6 +818,385 @@ def analyze_batch():
         }
     })
 
+@app.route('/api/export-report', methods=['POST'])
+def export_report():
+    """
+    导出分析报告（Excel格式）
+    
+    请求体应包含完整的批量分析结果数据
+    """
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "请求数据不能为空"}), 400
+        
+        results = data.get('results', [])
+        statistics = data.get('statistics', {})
+        analysis_info = data.get('analysis_info', {})
+        privacy_info = data.get('privacy_info', {})
+        
+        if not results:
+            return jsonify({"error": "分析结果不能为空"}), 400
+        
+        # 创建Excel工作簿
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from datetime import datetime
+        
+        wb = Workbook()
+        
+        # 删除默认工作表
+        if 'Sheet' in wb.sheetnames:
+            wb.remove(wb['Sheet'])
+        
+        # ========== 工作表1：评论详情 ==========
+        ws1 = wb.create_sheet("评论详情", 0)
+        
+        # 设置表头
+        headers1 = [
+            "序号", "评论内容", "情感倾向", "置信度", "复核状态", "复核原因",
+            "关键词", "负面部分", "改进建议", "分析原因", "分析方法"
+        ]
+        
+        # 设置表头样式
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # 写入表头
+        for col_idx, header in enumerate(headers1, 1):
+            cell = ws1.cell(row=1, column=col_idx, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = border
+        
+        # 情感标签映射
+        sentiment_map = {
+            "strongly_negative": "强烈负面",
+            "weakly_negative": "轻微负面",
+            "neutral": "中性",
+            "weakly_positive": "轻微正面",
+            "strongly_positive": "强烈正面",
+            "positive": "正面",
+            "negative": "负面"
+        }
+        
+        # 复核状态映射
+        review_status_map = {
+            "invalid": "无效/待观察",
+            "needs_review": "需要复核",
+            "auto_accepted": "自动采纳"
+        }
+        
+        # 写入数据
+        for row_idx, result in enumerate(results, 2):
+            sentiment_data = result.get('sentiment', {})
+            sentiment_label = sentiment_data.get('sentiment', 'neutral')
+            sentiment_cn = sentiment_map.get(sentiment_label, sentiment_label)
+            
+            keywords = result.get('keywords', [])
+            keywords_str = ', '.join([kw.get('word', kw) if isinstance(kw, dict) else kw for kw in keywords[:5]])
+            
+            negative_parts = sentiment_data.get('negative_parts', [])
+            negative_parts_str = '; '.join(negative_parts) if negative_parts else '无'
+            
+            suggestions = sentiment_data.get('suggestions', [])
+            suggestions_str = '; '.join(suggestions) if suggestions else '无'
+            
+            review_status = result.get('review_status', 'needs_review')
+            review_status_cn = review_status_map.get(review_status, review_status)
+            
+            # 安全获取置信度（确保是数字类型）
+            confidence_value = result.get('confidence', 0)
+            if isinstance(confidence_value, dict):
+                confidence_value = confidence_value.get('value', 0) if 'value' in confidence_value else 0
+            try:
+                confidence_str = f"{float(confidence_value):.2%}"
+            except (ValueError, TypeError):
+                confidence_str = "0.00%"
+            
+            # 获取分析方法（优先从sentiment_data获取，如果没有则尝试从result直接获取）
+            method = sentiment_data.get('method', '')
+            if not method:
+                # 如果sentiment_data中没有method，尝试从result中获取（兼容某些情况）
+                method = result.get('method', 'ml')
+            # 如果还是没有，根据是否有AI相关字段判断
+            if not method or method == 'ml':
+                # 检查是否有AI分析的特征字段
+                if sentiment_data.get('keywords') or sentiment_data.get('negative_parts') or sentiment_data.get('suggestions'):
+                    # 如果有这些字段，可能是AI分析但没有method字段，尝试推断
+                    if 'ai' in str(sentiment_data.get('reason', '')).lower() or 'ai' in str(result.get('analysis_reason', '')).lower():
+                        method = 'ai_unknown'
+                    else:
+                        method = 'ml'
+                else:
+                    method = 'ml'
+            
+            # 格式化方法显示名称
+            method_display_map = {
+                'ai_deepseek': 'AI (DeepSeek)',
+                'ai_openai': 'AI (OpenAI)',
+                'ai_deepseek_batch': 'AI (DeepSeek批量)',
+                'ai_openai_batch': 'AI (OpenAI批量)',
+                'hybrid_ai': '混合 (AI优先)',
+                'hybrid_ml': '混合 (ML优先)',
+                'ml': 'ML (机器学习)',
+                'ai_unknown': 'AI (未知来源)'
+            }
+            method_display = method_display_map.get(method, method)
+            
+            row_data = [
+                row_idx - 1,  # 序号
+                result.get('text', ''),  # 评论内容
+                sentiment_cn,  # 情感倾向
+                confidence_str,  # 置信度
+                review_status_cn,  # 复核状态
+                result.get('review_reason', ''),  # 复核原因
+                keywords_str,  # 关键词
+                negative_parts_str,  # 负面部分
+                suggestions_str,  # 改进建议
+                sentiment_data.get('reason', ''),  # 分析原因
+                method_display  # 分析方法
+            ]
+            
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws1.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        
+        # 调整列宽
+        column_widths = [8, 40, 12, 10, 12, 15, 25, 30, 30, 30, 15]
+        for col_idx, width in enumerate(column_widths, 1):
+            ws1.column_dimensions[get_column_letter(col_idx)].width = width
+        
+        # 冻结首行
+        ws1.freeze_panes = 'A2'
+        
+        # ========== 工作表2：统计分析 ==========
+        ws2 = wb.create_sheet("统计分析", 1)
+        
+        # 满意度评分
+        satisfaction = statistics.get('satisfaction', 0)
+        # 处理satisfaction可能是字典的情况
+        if isinstance(satisfaction, dict):
+            satisfaction = satisfaction.get('score', 0)
+        try:
+            satisfaction_value = float(satisfaction)
+        except (ValueError, TypeError):
+            satisfaction_value = 0.0
+        ws2['A1'] = "满意度评分"
+        ws2['B1'] = f"{satisfaction_value:.2f}/5.0"
+        ws2['A1'].font = Font(bold=True, size=12)
+        ws2['B1'].font = Font(size=12)
+        
+        # 情感分布
+        ws2['A3'] = "情感分布"
+        ws2['A3'].font = Font(bold=True, size=12)
+        
+        sentiment_dist = statistics.get('sentiment_distribution', {})
+        ws2['A4'] = "情感类型"
+        ws2['B4'] = "数量"
+        ws2['C4'] = "占比"
+        
+        # 设置表头样式
+        for col in ['A4', 'B4', 'C4']:
+            cell = ws2[col]
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = border
+        
+        total_count = sum(sentiment_dist.values())
+        row = 5
+        for sentiment, count in sentiment_dist.items():
+            sentiment_cn = sentiment_map.get(sentiment, sentiment)
+            percentage = (count / total_count * 100) if total_count > 0 else 0
+            ws2[f'A{row}'] = sentiment_cn
+            ws2[f'B{row}'] = count
+            ws2[f'C{row}'] = f"{percentage:.2f}%"
+            for col in ['A', 'B', 'C']:
+                ws2[f'{col}{row}'].border = border
+            row += 1
+        
+        # 关键词统计
+        ws2[f'A{row+1}'] = "关键词统计（Top 20）"
+        ws2[f'A{row+1}'].font = Font(bold=True, size=12)
+        
+        top_keywords = statistics.get('top_keywords', [])
+        ws2[f'A{row+2}'] = "关键词"
+        ws2[f'B{row+2}'] = "出现次数"
+        
+        # 设置表头样式
+        for col in [f'A{row+2}', f'B{row+2}']:
+            cell = ws2[col]
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = border
+        
+        keyword_row = row + 3
+        for keyword_data in top_keywords[:20]:
+            word = keyword_data.get('word', keyword_data) if isinstance(keyword_data, dict) else keyword_data
+            count = keyword_data.get('count', 0) if isinstance(keyword_data, dict) else 0
+            ws2[f'A{keyword_row}'] = word
+            ws2[f'B{keyword_row}'] = count
+            for col in ['A', 'B']:
+                ws2[f'{col}{keyword_row}'].border = border
+            keyword_row += 1
+        
+        # 调整列宽
+        ws2.column_dimensions['A'].width = 20
+        ws2.column_dimensions['B'].width = 15
+        ws2.column_dimensions['C'].width = 12
+        
+        # ========== 工作表3：人工复核统计 ==========
+        ws3 = wb.create_sheet("人工复核统计", 2)
+        
+        human_review = statistics.get('human_review', {})
+        ws3['A1'] = "人工复核统计"
+        ws3['A1'].font = Font(bold=True, size=14)
+        
+        ws3['A3'] = "项目"
+        ws3['B3'] = "数量"
+        ws3['C3'] = "占比"
+        
+        # 设置表头样式
+        for col in ['A3', 'B3', 'C3']:
+            cell = ws3[col]
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = border
+        
+        review_data = [
+            ("需要复核", human_review.get('needed_count', 0)),
+            ("无效/待观察", human_review.get('invalid_count', 0)),
+            ("自动采纳", human_review.get('auto_accepted_count', 0)),
+            ("总计", human_review.get('total_count', 0))
+        ]
+        
+        total_review = human_review.get('total_count', 0)
+        row = 4
+        for label, count in review_data:
+            percentage = (count / total_review * 100) if total_review > 0 else 0
+            ws3[f'A{row}'] = label
+            ws3[f'B{row}'] = count
+            ws3[f'C{row}'] = f"{percentage:.2f}%"
+            for col in ['A', 'B', 'C']:
+                ws3[f'{col}{row}'].border = border
+            row += 1
+        
+        ws3['A8'] = "复核率"
+        review_rate = human_review.get('review_rate', 0)
+        try:
+            review_rate_value = float(review_rate)
+        except (ValueError, TypeError):
+            review_rate_value = 0.0
+        ws3['B8'] = f"{review_rate_value:.2f}%"
+        ws3['A8'].font = Font(bold=True)
+        ws3['B8'].font = Font(bold=True)
+        
+        # 调整列宽
+        ws3.column_dimensions['A'].width = 20
+        ws3.column_dimensions['B'].width = 15
+        ws3.column_dimensions['C'].width = 12
+        
+        # ========== 工作表4：分析信息 ==========
+        ws4 = wb.create_sheet("分析信息", 3)
+        
+        ws4['A1'] = "分析配置信息"
+        ws4['A1'].font = Font(bold=True, size=14)
+        
+        # 安全获取置信度阈值
+        confidence_thresholds = analysis_info.get('confidence_thresholds', {})
+        min_threshold = confidence_thresholds.get('min', 0.5) if isinstance(confidence_thresholds, dict) else 0.5
+        max_threshold = confidence_thresholds.get('max', 0.85) if isinstance(confidence_thresholds, dict) else 0.85
+        try:
+            min_threshold_value = float(min_threshold)
+            max_threshold_value = float(max_threshold)
+        except (ValueError, TypeError):
+            min_threshold_value = 0.5
+            max_threshold_value = 0.85
+        
+        analysis_config = [
+            ("分析模式", analysis_info.get('mode', 'auto')),
+            ("AI分析启用", "是" if analysis_info.get('ai_enabled', False) else "否"),
+            ("AI分析数量", analysis_info.get('ai_analysis_count', 0)),
+            ("ML分析数量", analysis_info.get('ml_analysis_count', 0)),
+            ("总评论数", analysis_info.get('total_comments', 0)),
+            ("置信度阈值（最小）", f"{min_threshold_value:.2f}"),
+            ("置信度阈值（最大）", f"{max_threshold_value:.2f}"),
+        ]
+        
+        row = 3
+        for label, value in analysis_config:
+            ws4[f'A{row}'] = label
+            ws4[f'B{row}'] = value
+            ws4[f'A{row}'].font = Font(bold=True)
+            ws4[f'A{row}'].border = border
+            ws4[f'B{row}'].border = border
+            row += 1
+        
+        # 隐私保护信息
+        if privacy_info:
+            row += 1
+            ws4[f'A{row}'] = "隐私保护统计"
+            ws4[f'A{row}'].font = Font(bold=True, size=12)
+            
+            privacy_config = [
+                ("检测到敏感信息", privacy_info.get('sensitive_detected_count', 0)),
+                ("使用本地分析", privacy_info.get('local_analysis_count', 0)),
+                ("应用脱敏处理", privacy_info.get('desensitization_applied_count', 0)),
+            ]
+            
+            row += 2
+            for label, value in privacy_config:
+                ws4[f'A{row}'] = label
+                ws4[f'B{row}'] = value
+                ws4[f'A{row}'].border = border
+                ws4[f'B{row}'].border = border
+                row += 1
+        
+        # 生成时间
+        row += 1
+        ws4[f'A{row}'] = "报告生成时间"
+        ws4[f'B{row}'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ws4[f'A{row}'].font = Font(bold=True)
+        
+        # 调整列宽
+        ws4.column_dimensions['A'].width = 25
+        ws4.column_dimensions['B'].width = 30
+        
+        # 保存到内存
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        # 生成文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"评论分析报告_{timestamp}.xlsx"
+        
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        print(f"[导出报告] 错误: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"导出报告失败: {str(e)}"}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """健康检查"""

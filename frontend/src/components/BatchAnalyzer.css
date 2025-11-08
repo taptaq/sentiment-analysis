@@ -97,7 +97,8 @@
 }
 
 .template-button,
-.upload-button {
+.upload-button,
+.export-button {
   padding: 12px 24px;
   background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
   color: white;
@@ -112,7 +113,8 @@
 }
 
 .template-button:hover,
-.upload-button:hover {
+.upload-button:hover,
+.export-button:hover:not(:disabled) {
   transform: translateY(-2px) scale(1.05);
   box-shadow: 0 6px 20px rgba(79, 172, 254, 0.6);
 }
@@ -126,6 +128,19 @@
   box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
 }
 
+.export-button {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+}
+
+.export-button:hover:not(:disabled) {
+  box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+}
+
+.export-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .excel-tip {
   color: #666;
   font-size: 0.85rem;

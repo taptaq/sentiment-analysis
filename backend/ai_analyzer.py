@@ -29,6 +29,7 @@ class AIAnalyzer:
         
         # DeepSeek配置
         self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY', 'sk-f6f33f981ae343c3bbca6564f169fa1d')
+        # self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY', '')
         self.deepseek_base_url = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')
         self.deepseek_model = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
         
