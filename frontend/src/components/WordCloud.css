@@ -1,0 +1,47 @@
+.wordcloud-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 16px;
+  min-height: 300px;
+  position: relative;
+  overflow: visible; /* 改为 visible，避免隐藏 canvas */
+  width: 100%;
+}
+
+/* react-wordcloud2 生成的 canvas 样式 */
+.wordcloud-container canvas {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  max-width: 100%;
+  height: auto;
+}
+
+.wordcloud-container.empty {
+  background: rgba(240, 240, 240, 0.5);
+  color: #999;
+  font-size: 0.9rem;
+}
+
+.wordcloud-container.empty p {
+  margin: 0;
+  color: #999;
+}
+
+.wordcloud-canvas {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  transition: transform 0.3s ease;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.wordcloud-canvas:hover {
+  transform: scale(1.02);
+}
+

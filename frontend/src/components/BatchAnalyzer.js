@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { API_BASE_URL } from '../config';
+import WordCloudComponent from './WordCloud';
 import './BatchAnalyzer.css';
 
 const BatchAnalyzer = () => {
   const [comments, setComments] = useState([
-    { text: '' }
+    { text: '', sku: '', product_title: '' }
   ]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -17,16 +18,16 @@ const BatchAnalyzer = () => {
   const [reviewSubmitted, setReviewSubmitted] = useState(new Set());
 
   const handleAddComment = () => {
-    setComments([...comments, { text: '' }]);
+    setComments([...comments, { text: '', sku: '', product_title: '' }]);
   };
 
   const handleRemoveComment = (index) => {
     setComments(comments.filter((_, i) => i !== index));
   };
 
-  const handleCommentChange = (index, value) => {
+  const handleCommentChange = (index, field, value) => {
     const newComments = [...comments];
-    newComments[index].text = value;
+    newComments[index][field] = value;
     setComments(newComments);
   };
 
@@ -161,8 +162,15 @@ const BatchAnalyzer = () => {
     setResult(null);
 
     try {
+      // 格式化评论数据，包含sku和product_title
+      const formattedComments = validComments.map(c => ({
+        text: c.text.trim(),
+        sku: c.sku?.trim() || undefined,
+        product_title: c.product_title?.trim() || undefined
+      }));
+      
       const response = await axios.post(`${API_BASE_URL}/analyze-batch`, {
-        comments: validComments
+        comments: formattedComments
       });
       setResult(response.data);
     } catch (err) {
@@ -300,27 +308,52 @@ const BatchAnalyzer = () => {
               </button>
             )}
           </div>
-          <p className="excel-tip">支持 .xlsx 和 .xls 格式，Excel文件需包含"评论"列</p>
+          <p className="excel-tip">支持 .xlsx 和 .xls 格式，Excel文件需包含"评论内容"列</p>
         </div>
 
         <div className="comments-list">
           {comments.map((comment, index) => (
             <div key={index} className="comment-row">
+              <div className="comment-header">
+                <span className="comment-number">评论 {index + 1}</span>
+                {comments.length > 1 && (
+                  <button
+                    className="remove-button"
+                    onClick={() => handleRemoveComment(index)}
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+              <div className="product-info-row">
+                <div className="product-info-item">
+                  <label>产品标题（可选）</label>
+                  <input
+                    type="text"
+                    className="product-input-small"
+                    placeholder="产品标题..."
+                    value={comment.product_title || ''}
+                    onChange={(e) => handleCommentChange(index, 'product_title', e.target.value)}
+                  />
+                </div>
+                <div className="product-info-item">
+                  <label>SKU（可选）</label>
+                  <input
+                    type="text"
+                    className="product-input-small"
+                    placeholder="SKU..."
+                    value={comment.sku || ''}
+                    onChange={(e) => handleCommentChange(index, 'sku', e.target.value)}
+                  />
+                </div>
+              </div>
               <textarea
                 className="comment-input"
                 placeholder={`评论 ${index + 1}...`}
                 value={comment.text}
-                onChange={(e) => handleCommentChange(index, e.target.value)}
+                onChange={(e) => handleCommentChange(index, 'text', e.target.value)}
                 rows={3}
               />
-              {comments.length > 1 && (
-                <button
-                  className="remove-button"
-                  onClick={() => handleRemoveComment(index)}
-                >
-                  删除
-                </button>
-              )}
             </div>
           ))}
         </div>
@@ -365,6 +398,34 @@ const BatchAnalyzer = () => {
             </div>
           </div>
 
+          {/* 情感分布统计 */}
+          {result.statistics?.sentiment_distribution && (
+            <div className="result-card sentiment-stats-card">
+              <h3>情感分布统计</h3>
+              <div className="sentiment-stats-grid">
+                {Object.entries(result.statistics.sentiment_distribution).map(([key, value]) => (
+                  <div key={key} className="sentiment-stat-item">
+                    <div 
+                      className="sentiment-stat-badge"
+                      style={{ backgroundColor: COLORS[key] || '#ff9800' }}
+                    >
+                      {getSentimentText(key)}
+                    </div>
+                    <div className="sentiment-stat-count">
+                      <span className="count-number">{value}</span>
+                      <span className="count-label">条</span>
+                    </div>
+                    <div className="sentiment-stat-percentage">
+                      {result.statistics.satisfaction.total_comments > 0 
+                        ? ((value / result.statistics.satisfaction.total_comments) * 100).toFixed(1)
+                        : 0}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 图表区域 */}
           <div className="charts-container">
             {/* 情感分布饼图 */}
@@ -407,6 +468,18 @@ const BatchAnalyzer = () => {
                     <Bar dataKey="count" fill="#667eea" />
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* 关键词词云 */}
+            {result.statistics?.top_keywords && result.statistics.top_keywords.length > 0 && (
+              <div className="chart-card wordcloud-chart-card">
+                <h3>关键词词云</h3>
+                <WordCloudComponent 
+                  words={result.statistics.top_keywords} 
+                  width={600} 
+                  height={400}
+                />
               </div>
             )}
           </div>

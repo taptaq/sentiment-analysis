@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
+import WordCloudComponent from './WordCloud';
 import './CommentAnalyzer.css';
 
 const CommentAnalyzer = () => {
   const [text, setText] = useState('');
+  const [sku, setSku] = useState('');
+  const [productTitle, setProductTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -26,7 +29,9 @@ const CommentAnalyzer = () => {
 
     try {
       const response = await axios.post(`${API_BASE_URL}/analyze`, {
-        text: text.trim()
+        text: text.trim(),
+        sku: sku.trim() || undefined,
+        product_title: productTitle.trim() || undefined
       });
       setResult(response.data);
     } catch (err) {
@@ -102,6 +107,30 @@ const CommentAnalyzer = () => {
     <div className="comment-analyzer">
       <div className="input-section">
         <h2>输入评论内容</h2>
+        <div className="product-info-inputs">
+          <div className="input-group">
+            <label htmlFor="product-title">产品标题（可选）</label>
+            <input
+              id="product-title"
+              type="text"
+              className="product-input"
+              placeholder="请输入产品标题..."
+              value={productTitle}
+              onChange={(e) => setProductTitle(e.target.value)}
+            />
+          </div>
+          <div className="input-group">
+            <label htmlFor="sku">商品SKU（可选）</label>
+            <input
+              id="sku"
+              type="text"
+              className="product-input"
+              placeholder="请输入商品SKU..."
+              value={sku}
+              onChange={(e) => setSku(e.target.value)}
+            />
+          </div>
+        </div>
         <textarea
           className="comment-input"
           placeholder="请输入商品评论..."
@@ -235,6 +264,17 @@ const CommentAnalyzer = () => {
 
           <div className="result-card">
             <h3>关键词提取</h3>
+            {/* 词云展示 */}
+            {result.keywords && result.keywords.length > 0 && (
+              <div className="wordcloud-section">
+                <h4 className="wordcloud-title">关键词词云</h4>
+                <WordCloudComponent 
+                  words={result.keywords} 
+                  width={600} 
+                  height={350}
+                />
+              </div>
+            )}
             <div className="keywords-list">
               {result.keywords.map((kw, index) => (
                 <div key={index} className="keyword-item">

@@ -257,7 +257,7 @@ def check_human_review_needed(confidence):
             "reason": f"置信度在复核区间内（{HUMAN_REVIEW_MIN_THRESHOLD} <= {confidence:.2f} <= {HUMAN_REVIEW_MAX_THRESHOLD}），需要人工复核"
         }
 
-def analyze_sentiment(text, use_ai=None):
+def analyze_sentiment(text, use_ai=None, sku=None, product_title=None):
     """
     智能情感分析：优先使用AI，失败时回退到ML
     模型负责对全部评论进行初筛，并输出其置信度
@@ -265,6 +265,8 @@ def analyze_sentiment(text, use_ai=None):
     Args:
         text: 评论文本
         use_ai: 是否使用AI，None表示自动选择
+        sku: 商品SKU（可选）
+        product_title: 产品标题（可选）
         
     Returns:
         情感分析结果，包含confidence和human_review_needed字段
@@ -301,8 +303,9 @@ def analyze_sentiment(text, use_ai=None):
     
     # 尝试使用AI分析
     if use_ai and AI_AVAILABLE:
-        result = ai_analyzer.analyze_sentiment_with_ai(text)
-        print(result, '-----------------airesult-----------------')
+        result = ai_analyzer.analyze_sentiment_with_ai(text, sku=sku, product_title=product_title)
+        if result:
+            return result
     
     # 如果AI分析失败或未启用，使用ML模型
     if result is None:
@@ -610,11 +613,17 @@ def analyze_batch():
                 if sensitive_detected:
                     analysis_text, _ = privacy_utils.desensitize_text(original_text, keep_context=True)
                 
+                # 获取sku和产品标题
+                sku = comment.get('sku', '')
+                product_title = comment.get('product_title', '')
+                
                 ai_comments.append({
                     'index': i,
                     'original': original_text,
                     'analysis': analysis_text,
-                    'sensitive_detected': sensitive_detected
+                    'sensitive_detected': sensitive_detected,
+                    'sku': sku,
+                    'product_title': product_title
                 })
                 ai_indices.append(i)
                 ai_analysis_texts.append(analysis_text)
@@ -622,9 +631,15 @@ def analyze_batch():
         # 批量AI分析
         if ai_analysis_texts:
             print(f"[批量分析] 使用批量AI分析 {len(ai_analysis_texts)} 条评论")
+            # 提取sku和产品标题列表
+            batch_skus = [c.get('sku', '') for c in ai_comments]
+            batch_titles = [c.get('product_title', '') for c in ai_comments]
+            
             batch_results = ai_analyzer.analyze_sentiment_batch_with_ai(
                 ai_analysis_texts, 
-                batch_size=ai_analyzer.batch_size
+                batch_size=ai_analyzer.batch_size,
+                skus=batch_skus if any(batch_skus) else None,
+                product_titles=batch_titles if any(batch_titles) else None
             )
             
             # 将批量结果映射回原始位置，并保存评论信息
@@ -694,6 +709,10 @@ def analyze_batch():
             else:
                 current_use_ai = use_ai
         
+        # 获取sku和产品标题
+        sku = comment.get('sku', '')
+        product_title = comment.get('product_title', '')
+        
         # 如果使用AI，对文本进行脱敏处理
         analysis_text = original_text
         if current_use_ai and PRIVACY_AVAILABLE and comment_privacy_info.get("sensitive_detected", False):
@@ -736,7 +755,7 @@ def analyze_batch():
                 }
         else:
             # 使用原有的单条分析逻辑
-            sentiment_result = analyze_sentiment(analysis_text, use_ai=current_use_ai)
+            sentiment_result = analyze_sentiment(analysis_text, use_ai=current_use_ai, sku=sku, product_title=product_title)
         
         # 统计分析方法
         if 'ai' in sentiment_result.get('method', ''):
@@ -1290,8 +1309,24 @@ def submit_human_review():
     if not text:
         return jsonify({"error": "评论文本不能为空"}), 400
     
-    if reviewed_sentiment not in ['positive', 'negative', 'neutral']:
-        return jsonify({"error": "复核情感必须是positive、negative或neutral之一"}), 400
+    # 支持五分类情感标签，同时兼容旧的三分类标签
+    valid_sentiments = SENTIMENT_LABEL_LIST if SENTIMENT_LABELS_AVAILABLE else ['positive', 'negative', 'neutral']
+    # 也兼容旧标签
+    valid_sentiments_with_old = valid_sentiments + ['positive', 'negative', 'neutral']
+    valid_sentiments_with_old = list(set(valid_sentiments_with_old))  # 去重
+    
+    if reviewed_sentiment not in valid_sentiments_with_old:
+        if SENTIMENT_LABELS_AVAILABLE:
+            return jsonify({
+                "error": f"复核情感必须是以下之一: {', '.join(valid_sentiments)} (也兼容旧标签: positive, negative, neutral)"
+            }), 400
+        else:
+            return jsonify({"error": "复核情感必须是positive、negative或neutral之一"}), 400
+    
+    # 如果使用旧标签，转换为新标签
+    if SENTIMENT_LABELS_AVAILABLE and reviewed_sentiment in ['positive', 'negative', 'neutral']:
+        from sentiment_labels import convert_old_label_to_new
+        reviewed_sentiment = convert_old_label_to_new(reviewed_sentiment, text)
     
     # 生成评论的唯一标识（如果没有提供comment_id）
     if not comment_id:
@@ -1308,7 +1343,29 @@ def submit_human_review():
     was_low_confidence = review_status['needs_review'] or review_status['status'] == 'invalid'
     
     # 判断人工复核结果与模型结果是否一致
-    is_consistent = (model_sentiment == reviewed_sentiment)
+    # 对于五分类，如果方向一致（都是正面或都是负面），也认为基本一致
+    def sentiments_match(sentiment1, sentiment2):
+        """判断两个情感标签是否匹配（完全一致或方向一致）"""
+        if sentiment1 == sentiment2:
+            return True
+        
+        # 如果都是正面（包括 strongly_positive 和 weakly_positive）
+        if sentiment1 in ['strongly_positive', 'weakly_positive', 'positive'] and \
+           sentiment2 in ['strongly_positive', 'weakly_positive', 'positive']:
+            return True
+        
+        # 如果都是负面（包括 strongly_negative 和 weakly_negative）
+        if sentiment1 in ['strongly_negative', 'weakly_negative', 'negative'] and \
+           sentiment2 in ['strongly_negative', 'weakly_negative', 'negative']:
+            return True
+        
+        # 如果都是中性
+        if sentiment1 == 'neutral' and sentiment2 == 'neutral':
+            return True
+        
+        return False
+    
+    is_consistent = sentiments_match(model_sentiment, reviewed_sentiment)
     
     # 存储人工复核结果（实际应用中应使用数据库）
     human_review_results[comment_id] = {
@@ -1473,7 +1530,7 @@ def upload_excel():
         
         # 查找评论列（支持多种可能的列名）
         comment_column = None
-        possible_names = ['评论', 'comment', 'comments', '内容', '文本', 'text', 'content', '评论文本']
+        possible_names = ['评论内容', '评论', 'comment', 'comments', '内容', '文本', 'text', 'content', '评论文本']
         
         for col in df.columns:
             if str(col).strip() in possible_names:
@@ -1485,14 +1542,29 @@ def upload_excel():
             comment_column = df.columns[0]
             print(f"[Excel导入] 未找到标准评论列，使用第一列: {comment_column}")
         
-        # 提取评论数据
+        # 提取评论数据（包含sku和产品标题）
         comments = []
         for idx, row in df.iterrows():
             comment_text = str(row[comment_column]).strip()
             if comment_text and comment_text.lower() != 'nan' and comment_text != '':
-                comments.append({
-                    "text": comment_text
-                })
+                comment_data = {"text": comment_text}
+                
+                # 尝试提取sku和产品标题
+                sku_columns = ['sku', 'SKU', '商品SKU', '商品sku']
+                title_columns = ['产品标题', '产品名称', '商品标题', '商品名称', 'title', 'product_title']
+                
+                for col in df.columns:
+                    col_str = str(col).strip()
+                    if col_str in sku_columns:
+                        sku_value = str(row[col]).strip()
+                        if sku_value and sku_value.lower() != 'nan':
+                            comment_data['sku'] = sku_value
+                    elif col_str in title_columns:
+                        title_value = str(row[col]).strip()
+                        if title_value and title_value.lower() != 'nan':
+                            comment_data['product_title'] = title_value
+                
+                comments.append(comment_data)
         
         if not comments:
             return jsonify({"error": "Excel文件中未找到有效的评论数据"}), 400
@@ -1517,15 +1589,35 @@ def download_template():
     try:
         # 创建示例数据
         sample_data = {
-            '评论': [
+            '用户名': [
+                '用户001',
+                '用户002',
+                '用户003',
+                '用户004',
+            ],
+            '日期': [
+                '2024-01-15',
+                '2024-01-16',
+                '2024-01-17',
+                '2024-01-18',
+            ],
+            '评论内容': [
                 '这个商品质量很好，非常满意！',
                 '物流很快，包装精美，五星好评！',
                 '质量不错，价格实惠',
                 '商品质量差，不推荐',
-                '一般般，还可以',
-                '非常喜欢，下次还会购买',
-                '不满意，退货了',
-                '性价比很高，推荐购买'
+            ],
+            'sku': [
+                'SKU001',
+                'SKU002',
+                'SKU003',
+                'SKU004',
+            ],
+            '产品标题': [
+                '高品质商品A',
+                '优质商品B',
+                '实惠商品C',
+                '标准商品D',
             ]
         }
         

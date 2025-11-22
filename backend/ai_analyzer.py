@@ -10,6 +10,7 @@ import json
 import requests
 import random
 from typing import Dict, List, Optional, Tuple
+from prompt_builder import get_system_message, get_analysis_prompt, get_batch_analysis_prompt
 
 # 导入情感标签定义
 try:
@@ -112,193 +113,14 @@ class AIAnalyzer:
             print(f"[Few-shot] 加载示例数据失败: {e}")
             return []
     
-    def _get_system_message(self) -> str:
-        """获取统一的系统消息"""
-        return "你是一个专业的中文情感分析专家，特别擅长分析成人用品等特殊产品的评论。你深刻理解该行业用户'羞于直言'的评论特点，能够精准识别隐晦、委婉、间接表达中的真实情感。\n\n核心能力：\n1. 识别羞于直言的隐晦表达：'尴尬'、'私密'、'难以启齿'、'担心'等语境下的真实情感\n2. 识别隐晦的积极体验：'探索'、'愉悦'、'新奇'、'超出预期'等积极表达的隐晦形式\n3. 理解语境差异：同样的词汇在不同语境下的不同含义（如'第一次'可能是探索性积极，也可能是使用困难）\n4. 透过委婉表达识别真实情感：'一般'、'可以'、'还行'在成人用品语境下的真实含义\n\n分析原则：\n- 必须识别所有负面内容，包括直接表达和隐晦表达\n- 必须识别所有正面内容，包括隐晦的积极体验表达\n- 特别关注安全性、舒适度、功能性、隐私卫生等方面\n- 为每个负面部分生成对应的改进建议\n- 结合语境和行业特点，准确判断真实情感倾向"
-    
-    def _get_analysis_prompt(self, text: str, few_shot_examples: List[Tuple[str, str]] = None) -> str:
-        """
-        获取统一的分析prompt
-        
-        Args:
-            text: 待分析的文本
-            few_shot_examples: Few-shot示例列表，格式为 [(text, label), ...]
-        """
-        # 构建few-shot examples部分
-        few_shot_section = ""
-        if few_shot_examples and len(few_shot_examples) > 0:
-            few_shot_section = "\n\n【重要参考：人工复核数据示例】\n"
-            few_shot_section += "以下是一些已经人工复核并标注好的评论示例，这些是经过人工验证的准确标注数据。\n"
-            few_shot_section += "**特别重要**：当你对评论的情感判断感到模糊、不确定或存在歧义时，必须优先参考这些示例的分析标准和标注结果。\n\n"
-            
-            for i, (example_text, example_label) in enumerate(few_shot_examples, 1):
-                # 支持五分类标签显示
-                label_cn_map = {
-                    "strongly_negative": "强烈负面",
-                    "weakly_negative": "轻微负面",
-                    "neutral": "中性",
-                    "weakly_positive": "轻微正面",
-                    "strongly_positive": "强烈正面",
-                    "positive": "正面",  # 兼容旧标签
-                    "negative": "负面",  # 兼容旧标签
-                }
-                label_cn = label_cn_map.get(example_label, example_label)
-                few_shot_section += f"示例{i}：\n"
-                few_shot_section += f"评论：{example_text}\n"
-                few_shot_section += f"人工复核标注：{label_cn} ({example_label})\n\n"
-            
-            few_shot_section += "【如何使用这些示例】\n"
-            few_shot_section += "1. 如果当前评论与某个示例在表达方式、用词、语境上相似，应参考该示例的标注结果\n"
-            few_shot_section += "2. 如果当前评论的情感倾向不明显或存在歧义，优先参考相似示例的标注标准\n"
-            few_shot_section += "3. 如果当前评论的表达方式与示例中的隐晦表达类似，应按照示例的标注逻辑进行判断\n"
-            few_shot_section += "4. 当你的判断与示例标准不一致时，应重新审视并调整，确保与人工复核的标准保持一致\n"
-            few_shot_section += "5. 这些示例代表了人工复核的准确标准，当判断模糊时，必须依赖这些示例而非自己的推测\n\n"
-        
-        return f"""请仔细分析以下商品评论的情感倾向，并提取关键词。深刻理解成人用品行业用户"羞于直言"的评论特点，精准识别隐晦表达的真实情感。{few_shot_section}
-
-评论内容：{text}
-
-【核心分析原则】
-深刻理解成人用品行业用户"羞于直言"的评论特点，需要从隐晦、委婉、间接的表达中识别真实情感。
-
-【负面情感识别 - 隐晦表达】
-必须识别评论中的所有负面部分，特别注意以下隐晦表达：
-1. 羞于直言的负面表达：
-   * "尴尬"、"有点尴尬"、"不太自然"、"感觉怪怪的" → 可能表示使用体验不佳、设计不合理
-   * "私密性"、"隐私"、"包装"、"担心被发现" → 可能表示包装不够私密、隐私保护不足
-   * "难以启齿"、"不好意思说"、"不太方便" → 可能表示使用不便、体验不佳
-   * "第一次"、"新手"、"不太懂"、"摸索" → 可能表示产品说明不足、使用困难
-   * "有点担心"、"害怕"、"紧张" → 可能表示安全性担忧、使用焦虑
-
-2. 间接负面表达：
-   * "可以再改进"、"有待提升"、"有点问题"、"还可以更好"、"有点遗憾"、"一般"、"还好"、"凑合"
-   * "体验一般"、"效果不明显"、"不太理想"、"没有想象中好"
-   * "对比中的负面"（如"虽然外观不错，但质量一般"中的"质量一般"）
-   * "条件性负面"（如"如果噪音再小点就好了"中的"噪音大"）
-
-3. 直接负面表达：
-   * "质量差"、"噪音大"、"不满意"、"材质不好"、"不舒服"、"有问题"
-
-【正面情感识别 - 隐晦表达】
-特别注意识别隐晦的积极体验表达：
-1. 探索性积极表达：
-   * "探索"、"尝试"、"体验"、"发现" → 可能表示对产品的积极探索和接受
-   * "新奇"、"有趣"、"特别" → 可能表示产品带来的新鲜感和积极体验
-
-2. 愉悦性隐晦表达：
-   * "愉悦"、"满意"、"不错"、"可以"、"还行" → 在成人用品语境下可能是较强的正面评价
-   * "超出预期"、"比想象中好"、"值得" → 明确的积极评价
-   * "推荐"、"会回购"、"下次还买" → 强烈的正面信号
-
-3. 体验性积极表达：
-   * "体验感"、"感觉"、"效果" → 结合上下文判断，可能是正面体验
-   * "舒适"、"柔软"、"温和" → 材质和体验的正面评价
-
-【成人用品特殊关注点】
-1. 安全性相关问题：材质安全、使用安全、卫生安全
-2. 舒适度问题：材质舒适度、尺寸合适度、使用体验舒适度
-3. 功能性问题：效果、性能、耐用性、使用体验
-4. 隐私和卫生问题：包装、清洁、存储
-
-【情感判断规则】
-1. 结合语境判断：同样的词汇在不同语境下可能有不同含义
-   * "第一次"可能是探索性积极，也可能是使用困难的负面
-   * "一般"在成人用品语境下可能是委婉的负面表达
-   * "可以"、"还行"在羞于直言的语境下可能是较强的正面评价
-
-2. 识别真实情感：透过委婉表达识别真实情感
-   * "有点尴尬" → 负面（使用体验不佳）
-   * "探索了一下" → 正面（积极尝试和接受）
-   * "私密性不错" → 正面（隐私保护满意）
-   * "包装有点担心" → 负面（隐私担忧）
-
-3. 整体情感判断：综合考虑所有表达，识别主要情感倾向
-
-【输出要求】
-- 每条负面部分都应该对应一个具体的改进建议
-- 即使评论整体偏正面或中性，只要有负面内容，就必须识别出来
-- 特别注意识别隐晦的正面和负面表达，不要被委婉的措辞误导
-
-【判断模糊时的处理原则】
-当遇到以下情况时，说明判断存在模糊性，必须参考上述人工复核数据示例：
-1. 评论表达隐晦，难以直接判断情感倾向
-2. 评论中存在混合情感，不确定主要倾向
-3. 某些关键词在不同语境下可能有不同含义，需要参考示例中的标注标准
-4. 置信度计算时，如果probabilities分布较为均匀（如三个值都在0.3-0.4之间），说明判断不够确定
-5. 评论的表达方式与示例中的隐晦表达类似，但不确定应如何标注
-
-**关键原则**：当判断模糊时，不要依赖自己的推测，必须参考人工复核数据示例中的标注标准，确保分析结果与人工复核的标准保持一致。如果示例中有相似的评论，应直接参考其标注结果。
-
-请以JSON格式返回结果，格式如下：
-{{
-    "sentiment": "strongly_negative" 或 "weakly_negative" 或 "neutral" 或 "weakly_positive" 或 "strongly_positive",
-    "confidence": 0.0-1.0之间的置信度分数,
-    "probabilities": {{
-        "strongly_negative": 0.0-1.0,
-        "weakly_negative": 0.0-1.0,
-        "neutral": 0.0-1.0,
-        "weakly_positive": 0.0-1.0,
-        "strongly_positive": 0.0-1.0
-    }},
-    "reason": "分析原因（简短说明）",
-    "keywords": ["关键词1", "关键词2", ...],
-    "negative_parts": ["负面部分1", "负面部分2", ...],
-    "suggestions": ["改进建议1", "改进建议2", ...],
-    "confidence_calculation": "置信度计算说明（可选）"
-}}
-
-【置信度计算说明】
-confidence（置信度）的计算方式：
-1. 基于probabilities（概率分布）的最大值：confidence = max(probabilities.values())
-2. 综合考虑以下因素：
-   - 评论表达的明确程度（直接表达 > 隐晦表达）
-   - 情感倾向的一致性（单一情感 > 混合情感）
-   - 关键词的强度（强烈词汇 > 一般词汇）
-   - 上下文语境的支持度（语境一致 > 语境模糊）
-   - **与人工复核示例的匹配度**（如果当前评论与示例高度相似，可适当提高confidence）
-3. 计算公式示例：
-   - 如果probabilities = {{"positive": 0.8, "negative": 0.15, "neutral": 0.05}}
-   - 则confidence = max(0.8, 0.15, 0.05) = 0.8
-   - 如果表达非常明确且强烈，可以适当提高confidence（但不超过0.95）
-   - **如果表达隐晦或存在歧义，但能在人工复核示例中找到相似案例，应参考示例的标注结果，并基于示例的准确性适当提高confidence（因为示例是人工验证的）**
-   - 如果表达隐晦且无法在示例中找到相似案例，应适当降低confidence（但不低于0.5）
-
-【判断模糊时的置信度处理】
-- 如果probabilities分布较为均匀（如三个值都在0.3-0.4之间），说明判断存在模糊性
-- 此时应检查人工复核示例中是否有相似案例：
-  * **如果有相似案例，参考其标注结果，confidence应基于示例的准确性（通常较高，0.75-0.9之间，因为示例是人工验证的）**
-  * 如果没有相似案例，confidence应适当降低（0.5-0.7之间），表示需要人工复核
-- **关键原则**：当判断模糊时，如果示例中有相似案例，应优先采用示例的标注结果，并相应调整confidence和probabilities
-
-请确保：
-1. sentiment必须是以下五分类之一（针对成人用品场景优化）：
-   - "strongly_negative"（强烈负面）：非常不满意、强烈批评、严重问题
-   - "weakly_negative"（轻微负面）：不太满意、轻微问题、可以改进
-   - "neutral"（中性）：一般、还可以、无明显倾向
-   - "weakly_positive"（轻微正面）：基本满意、还不错、可以接受
-   - "strongly_positive"（强烈正面）：非常满意、强烈推荐、超出预期
-   混合情感根据主要倾向判断，判断模糊时优先参考人工复核示例
-2. confidence是0到1之间的数字，建议基于max(probabilities.values())计算，并根据表达明确程度和与示例的匹配度微调
-3. probabilities中的五个值加起来应该接近1.0
-4. **当判断模糊时，如果人工复核示例中有相似案例，应优先采用示例的标注结果，并相应调整confidence和probabilities**
-5. keywords是5-10个最重要的关键词
-6. negative_parts：必须完整列出评论中的所有负面部分，包括直接和隐含的负面表达，每个负面部分用简洁的短语概括（如"噪音大"、"质量一般"、"材质不好"、"舒适度差"、"效果不明显"、"尺寸不合适"、"安全性问题"、"可以改进"等），如果没有负面内容则为空数组
-7. suggestions：必须为每个negative_parts中的负面部分生成对应的具体改进建议：
-   - 对于材质/安全性问题：建议使用更安全、更舒适的材质
-   - 对于舒适度问题：建议优化产品设计，提升使用舒适度
-   - 对于功能性问题：建议改进产品功能，提升使用效果
-   - 对于尺寸问题：建议提供更多尺寸选择或优化尺寸设计
-   - 对于其他问题：根据具体情况生成针对性建议
-   建议数量应与负面部分数量一致，如果没有负面内容则为空数组
-8. confidence_calculation（可选）：简要说明置信度的计算依据，例如"基于概率分布最大值0.85，结合表达明确性调整为0.88"，如果参考了人工复核示例，应说明"参考了人工复核示例X的标注标准"
-9. 只返回JSON，不要其他文字"""
-    
-    def analyze_sentiment_with_ai(self, text: str) -> Optional[Dict]:
+    def analyze_sentiment_with_ai(self, text: str, sku: str = None, product_title: str = None) -> Optional[Dict]:
         """
         使用AI分析情感（支持few-shot learning）
         
         Args:
             text: 评论文本
+            sku: 商品SKU（可选）
+            product_title: 产品标题（可选）
             
         Returns:
             情感分析结果，如果失败返回None
@@ -316,25 +138,27 @@ confidence（置信度）的计算方式：
         # 按优先级尝试：DeepSeek > OpenAI
         # 优先使用DeepSeek（如果配置了）
         if self.deepseek_api_key:
-            result = self._analyze_with_deepseek(text, few_shot_examples)
+            result = self._analyze_with_deepseek(text, few_shot_examples, sku, product_title)
             if result:
                 return result
         
         # 尝试使用OpenAI
         if self.openai_api_key:
-            result = self._analyze_with_openai(text, few_shot_examples)
+            result = self._analyze_with_openai(text, few_shot_examples, sku, product_title)
             if result:
                 return result
         
         return None
     
-    def analyze_sentiment_batch_with_ai(self, texts: List[str], batch_size: int = 10) -> List[Optional[Dict]]:
+    def analyze_sentiment_batch_with_ai(self, texts: List[str], batch_size: int = 10, skus: List[str] = None, product_titles: List[str] = None) -> List[Optional[Dict]]:
         """
         批量使用AI分析情感（优化：一次API调用处理多条评论）
         
         Args:
             texts: 评论文本列表
             batch_size: 每批处理的评论数量（默认10条）
+            skus: 商品SKU列表（可选，与texts一一对应）
+            product_titles: 产品标题列表（可选，与texts一一对应）
             
         Returns:
             情感分析结果列表，与输入列表一一对应，失败时对应位置为None
@@ -345,121 +169,54 @@ confidence（置信度）的计算方式：
         results = []
         total = len(texts)
         
-        # 分批处理
+        # 分批处理，每批合并为一次API调用
         for batch_start in range(0, total, batch_size):
             batch_end = min(batch_start + batch_size, total)
             batch_texts = texts[batch_start:batch_end]
+            batch_skus = skus[batch_start:batch_end] if skus else [None] * len(batch_texts)
+            batch_titles = product_titles[batch_start:batch_end] if product_titles else [None] * len(batch_texts)
             
-            print(f"[批量AI分析] 处理批次 {batch_start//batch_size + 1}，评论 {batch_start+1}-{batch_end}/{total}")
+            batch_num = batch_start//batch_size + 1
+            print(f"[批量AI分析] 批次 {batch_num}/{total//batch_size + (1 if total % batch_size else 0)}：合并 {len(batch_texts)} 条评论为一次API调用（评论 {batch_start+1}-{batch_end}/{total}）")
             
-            # 尝试批量调用
+            # 尝试批量调用（优先批量，减少API调用次数）
             batch_results = None
+            max_retries = 2  # 批量调用最多重试2次
             
-            # 优先使用DeepSeek
-            if self.deepseek_api_key:
-                batch_results = self._analyze_batch_with_deepseek(batch_texts)
-                if batch_results:
-                    results.extend(batch_results)
-                    continue
+            for retry in range(max_retries):
+                # 优先使用DeepSeek
+                if self.deepseek_api_key:
+                    batch_results = self._analyze_batch_with_deepseek(batch_texts, batch_skus, batch_titles)
+                    if batch_results:
+                        results.extend(batch_results)
+                        print(f"[批量AI分析] 批次 {batch_num} 成功：DeepSeek批量调用，处理 {len(batch_results)} 条评论")
+                        break
+                
+                # 尝试使用OpenAI
+                if batch_results is None and self.openai_api_key:
+                    batch_results = self._analyze_batch_with_openai(batch_texts, batch_skus, batch_titles)
+                    if batch_results:
+                        results.extend(batch_results)
+                        print(f"[批量AI分析] 批次 {batch_num} 成功：OpenAI批量调用，处理 {len(batch_results)} 条评论")
+                        break
+                
+                # 如果失败且还有重试机会
+                if batch_results is None and retry < max_retries - 1:
+                    print(f"[批量AI分析] 批次 {batch_num} 失败，重试 {retry + 1}/{max_retries}...")
+                    import time
+                    time.sleep(1)  # 等待1秒后重试
             
-            # 尝试使用OpenAI
-            if self.openai_api_key:
-                batch_results = self._analyze_batch_with_openai(batch_texts)
-                if batch_results:
-                    results.extend(batch_results)
-                    continue
-            
-            # 如果批量调用失败，回退到单条调用
+            # 如果批量调用完全失败，才回退到单条调用（但尽量避免）
             if batch_results is None:
-                print(f"[批量AI分析] 批量调用失败，回退到单条调用")
-                for text in batch_texts:
-                    result = self.analyze_sentiment_with_ai(text)
+                print(f"[批量AI分析] 警告：批次 {batch_num} 批量调用失败，回退到单条调用（会增加API调用次数）")
+                for text, sku, title in zip(batch_texts, batch_skus, batch_titles):
+                    result = self.analyze_sentiment_with_ai(text, sku, title)
                     results.append(result)
         
         return results
     
-    def _get_batch_analysis_prompt(self, texts: List[str], few_shot_examples: List[Tuple[str, str]] = None) -> str:
-        """
-        获取批量分析的prompt
-        
-        Args:
-            texts: 评论文本列表
-            few_shot_examples: Few-shot示例列表
-        """
-        # 构建few-shot examples部分（与单条分析相同）
-        few_shot_section = ""
-        if few_shot_examples and len(few_shot_examples) > 0:
-            few_shot_section = "\n\n【重要参考：人工复核数据示例】\n"
-            few_shot_section += "以下是一些已经人工复核并标注好的评论示例，这些是经过人工验证的准确标注数据。\n"
-            few_shot_section += "**特别重要**：当你对评论的情感判断感到模糊、不确定或存在歧义时，必须优先参考这些示例的分析标准和标注结果。\n\n"
-            
-            for i, (example_text, example_label) in enumerate(few_shot_examples, 1):
-                label_cn_map = {
-                    "strongly_negative": "强烈负面",
-                    "weakly_negative": "轻微负面",
-                    "neutral": "中性",
-                    "weakly_positive": "轻微正面",
-                    "strongly_positive": "强烈正面",
-                    "positive": "正面",
-                    "negative": "负面",
-                }
-                label_cn = label_cn_map.get(example_label, example_label)
-                few_shot_section += f"示例{i}：\n"
-                few_shot_section += f"评论：{example_text}\n"
-                few_shot_section += f"人工复核标注：{label_cn} ({example_label})\n\n"
-            
-            few_shot_section += "【如何使用这些示例】\n"
-            few_shot_section += "1. 如果当前评论与某个示例在表达方式、用词、语境上相似，应参考该示例的标注结果\n"
-            few_shot_section += "2. 如果当前评论的情感倾向不明显或存在歧义，优先参考相似示例的标注标准\n"
-            few_shot_section += "3. 如果当前评论的表达方式与示例中的隐晦表达类似，应按照示例的标注逻辑进行判断\n"
-            few_shot_section += "4. 当你的判断与示例标准不一致时，应重新审视并调整，确保与人工复核的标准保持一致\n"
-            few_shot_section += "5. 这些示例代表了人工复核的准确标准，当判断模糊时，必须依赖这些示例而非自己的推测\n\n"
-        
-        # 构建批量评论部分
-        comments_section = "\n".join([f"评论{i+1}：{text}" for i, text in enumerate(texts)])
-        
-        return f"""请仔细分析以下多条商品评论的情感倾向，并提取关键词。深刻理解成人用品行业用户"羞于直言"的评论特点，精准识别隐晦表达的真实情感。{few_shot_section}
-
-【批量评论内容】
-{comments_section}
-
-【核心分析原则】
-深刻理解成人用品行业用户"羞于直言"的评论特点，需要从隐晦、委婉、间接的表达中识别真实情感。
-
-【输出要求】
-请为每条评论分别分析，并以JSON数组格式返回结果，格式如下：
-[
-    {{
-        "comment_index": 1,
-        "sentiment": "strongly_negative" 或 "weakly_negative" 或 "neutral" 或 "weakly_positive" 或 "strongly_positive",
-        "confidence": 0.0-1.0之间的置信度分数,
-        "probabilities": {{
-            "strongly_negative": 0.0-1.0,
-            "weakly_negative": 0.0-1.0,
-            "neutral": 0.0-1.0,
-            "weakly_positive": 0.0-1.0,
-            "strongly_positive": 0.0-1.0
-        }},
-        "reason": "分析原因（简短说明）",
-        "keywords": ["关键词1", "关键词2", ...],
-        "negative_parts": ["负面部分1", "负面部分2", ...],
-        "suggestions": ["改进建议1", "改进建议2", ...],
-        "confidence_calculation": "置信度计算说明（可选）"
-    }},
-    {{
-        "comment_index": 2,
-        ...
-    }}
-]
-
-【重要说明】
-1. 返回的数组长度必须与输入的评论数量一致
-2. comment_index 从1开始，对应评论1、评论2...
-3. 每条评论的分析标准与单条分析完全相同（参考上述few-shot示例和核心分析原则）
-4. probabilities中的五个值加起来应该接近1.0
-5. 只返回JSON数组，不要其他文字"""
     
-    def _analyze_batch_with_deepseek(self, texts: List[str]) -> Optional[List[Dict]]:
+    def _analyze_batch_with_deepseek(self, texts: List[str], skus: List[str] = None, product_titles: List[str] = None) -> Optional[List[Dict]]:
         """使用DeepSeek API批量分析"""
         try:
             headers = {
@@ -472,12 +229,13 @@ confidence（置信度）的计算方式：
             if self.use_few_shot and texts:
                 few_shot_examples = self._load_few_shot_examples(current_text=texts[0], count=self.few_shot_count)
             
-            prompt = self._get_batch_analysis_prompt(texts, few_shot_examples)
+            prompt = get_batch_analysis_prompt(texts, few_shot_examples, skus, product_titles)
+            # print(f"[批量DeepSeek] 提示：{prompt}")
             
             payload = {
                 "model": self.deepseek_model,
                 "messages": [
-                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "system", "content": get_system_message()},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
@@ -508,16 +266,27 @@ confidence（置信度）的计算方式：
                     
                     # 验证返回格式
                     if not isinstance(batch_results, list):
-                        print(f"[批量DeepSeek] 返回格式错误：不是数组")
+                        print(f"[批量DeepSeek] 返回格式错误：不是数组，内容：{content[:200]}")
                         return None
                     
                     if len(batch_results) != len(texts):
                         print(f"[批量DeepSeek] 返回数量不匹配：期望{len(texts)}，实际{len(batch_results)}")
-                        return None
+                        # 尝试修复：如果返回数量少于期望，补充None；如果多于期望，截取
+                        if len(batch_results) < len(texts):
+                            print(f"[批量DeepSeek] 尝试修复：补充 {len(texts) - len(batch_results)} 个None结果")
+                            batch_results.extend([None] * (len(texts) - len(batch_results)))
+                        else:
+                            print(f"[批量DeepSeek] 尝试修复：截取前 {len(texts)} 个结果")
+                            batch_results = batch_results[:len(texts)]
                     
                     # 转换为标准格式
                     formatted_results = []
-                    for item in batch_results:
+                    for idx, item in enumerate(batch_results):
+                        # 如果item为None（修复时补充的），跳过
+                        if item is None:
+                            formatted_results.append(None)
+                            continue
+                            
                         comment_index = item.get('comment_index', 0)
                         ai_probs = item.get("probabilities", {})
                         
@@ -580,7 +349,7 @@ confidence（置信度）的计算方式：
             print(f"DeepSeek批量分析失败: {str(e)}")
             return None
     
-    def _analyze_batch_with_openai(self, texts: List[str]) -> Optional[List[Dict]]:
+    def _analyze_batch_with_openai(self, texts: List[str], skus: List[str] = None, product_titles: List[str] = None) -> Optional[List[Dict]]:
         """使用OpenAI API批量分析"""
         try:
             headers = {
@@ -593,12 +362,12 @@ confidence（置信度）的计算方式：
             if self.use_few_shot and texts:
                 few_shot_examples = self._load_few_shot_examples(current_text=texts[0], count=self.few_shot_count)
             
-            prompt = self._get_batch_analysis_prompt(texts, few_shot_examples)
+            prompt = get_batch_analysis_prompt(texts, few_shot_examples, skus, product_titles)
             
             payload = {
                 "model": "gpt-3.5-turbo",
                 "messages": [
-                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "system", "content": get_system_message()},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
@@ -626,16 +395,27 @@ confidence（置信度）的计算方式：
                     batch_results = json.loads(content)
                     
                     if not isinstance(batch_results, list):
-                        print(f"[批量OpenAI] 返回格式错误：不是数组")
+                        print(f"[批量OpenAI] 返回格式错误：不是数组，内容：{content[:200]}")
                         return None
                     
                     if len(batch_results) != len(texts):
                         print(f"[批量OpenAI] 返回数量不匹配：期望{len(texts)}，实际{len(batch_results)}")
-                        return None
+                        # 尝试修复：如果返回数量少于期望，补充None；如果多于期望，截取
+                        if len(batch_results) < len(texts):
+                            print(f"[批量OpenAI] 尝试修复：补充 {len(texts) - len(batch_results)} 个None结果")
+                            batch_results.extend([None] * (len(texts) - len(batch_results)))
+                        else:
+                            print(f"[批量OpenAI] 尝试修复：截取前 {len(texts)} 个结果")
+                            batch_results = batch_results[:len(texts)]
                     
                     # 转换为标准格式（与DeepSeek相同）
                     formatted_results = []
-                    for item in batch_results:
+                    for idx, item in enumerate(batch_results):
+                        # 如果item为None（修复时补充的），跳过
+                        if item is None:
+                            formatted_results.append(None)
+                            continue
+                            
                         ai_probs = item.get("probabilities", {})
                         
                         if SENTIMENT_LABELS_AVAILABLE and any(k in ai_probs for k in ['strongly_negative', 'weakly_negative', 'weakly_positive', 'strongly_positive']):
@@ -693,7 +473,7 @@ confidence（置信度）的计算方式：
             print(f"OpenAI批量分析失败: {str(e)}")
             return None
     
-    def _analyze_with_deepseek(self, text: str, few_shot_examples: List[Tuple[str, str]] = None) -> Optional[Dict]:
+    def _analyze_with_deepseek(self, text: str, few_shot_examples: List[Tuple[str, str]] = None, sku: str = None, product_title: str = None) -> Optional[Dict]:
         """使用DeepSeek API分析（OpenAI兼容接口，支持few-shot learning）"""
         try:
             headers = {
@@ -701,12 +481,13 @@ confidence（置信度）的计算方式：
                 'Content-Type': 'application/json'
             }
             
-            prompt = self._get_analysis_prompt(text, few_shot_examples)
+            prompt = get_analysis_prompt(text, few_shot_examples, sku, product_title)
+            # print(f"[DeepSeek分析] 提示：{prompt}")
             
             payload = {
                 "model": self.deepseek_model,
                 "messages": [
-                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "system", "content": get_system_message()},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
@@ -794,7 +575,7 @@ confidence（置信度）的计算方式：
             print(f"DeepSeek分析失败: {str(e)}")
             return None
     
-    def _analyze_with_openai(self, text: str, few_shot_examples: List[Tuple[str, str]] = None) -> Optional[Dict]:
+    def _analyze_with_openai(self, text: str, few_shot_examples: List[Tuple[str, str]] = None, sku: str = None, product_title: str = None) -> Optional[Dict]:
         """使用OpenAI API分析（支持few-shot learning）"""
         try:
             headers = {
@@ -802,12 +583,12 @@ confidence（置信度）的计算方式：
                 'Content-Type': 'application/json'
             }
             
-            prompt = self._get_analysis_prompt(text, few_shot_examples)
+            prompt = get_analysis_prompt(text, few_shot_examples, sku, product_title)
             
             payload = {
                 "model": "gpt-3.5-turbo",
                 "messages": [
-                    {"role": "system", "content": self._get_system_message()},
+                    {"role": "system", "content": get_system_message()},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
