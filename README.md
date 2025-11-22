@@ -10,6 +10,11 @@
 - ✅ **批量分析**: 支持批量分析多条评论并生成统计报告
 - ✅ **可视化展示**: 使用图表展示情感分布和关键词统计
 
+## 相关截图
+<img width="983" height="811" alt="image" src="https://github.com/user-attachments/assets/5afe92a3-2c6b-42af-a661-5c7368de1221" />
+<img width="903" height="814" alt="image" src="https://github.com/user-attachments/assets/d07f432a-6aa2-40d1-b684-d6e6bf0b4027" />
+<img width="855" height="821" alt="image" src="https://github.com/user-attachments/assets/28940238-c760-4a54-8638-6e2711eb5ebf" />
+
 ## 技术栈
 
 ### 前端
